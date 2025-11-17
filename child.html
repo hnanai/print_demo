@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>子页面打印预览示例</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 0; }
+      .container { padding: 12px; }
+      .content { height: 480px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; }
+      .item { padding: 10px 12px; margin-bottom: 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fafafa; }
+      .item h3 { margin: 0 0 6px; font-size: 14px; }
+      .item p { margin: 0; color: #4b5563; font-size: 13px; }
+
+      @page { size: A4; margin: 12mm; }
+      @media print {
+        .content { height: auto !important; overflow: visible !important; }
+        .item { break-inside: avoid; page-break-inside: avoid; }
+        .page-break { break-before: page; page-break-before: always; }
+        .watermark { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-20deg); font-size: 100px; opacity: 0.08; color: #000; z-index: 9999; pointer-events: none; }
+        html, body { height: auto !important; overflow: visible !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h3>子页面：固定高度滚动容器</h3>
+      <div id="content" class="content"></div>
+    </div>
+
+    <script src="child.js"></script>
+  </body>
+</html>

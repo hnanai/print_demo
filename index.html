@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>打印预览 Demo（固定高度滚动容器）</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; margin: 0; }
+
+      .container { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+
+      .controls { position: sticky; top: 0; background: #fff; z-index: 10; padding: 12px 0; display: flex; gap: 12px; border-bottom: 1px solid #e5e7eb; }
+      .controls button { padding: 8px 12px; border-radius: 6px; border: 1px solid #d1d5db; background: #f9fafb; cursor: pointer; }
+
+      .content { height: 480px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; }
+      .item { padding: 10px 12px; margin-bottom: 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fafafa; }
+      .item h3 { margin: 0 0 6px; font-size: 14px; }
+      .item p { margin: 0; color: #4b5563; font-size: 13px; }
+
+      .footer { margin-top: 12px; color: #6b7280; font-size: 13px; }
+
+      /* 子页面（iframe）区域，模拟嵌套滚动场景 */
+      .frame-section { margin-top: 16px; }
+      .iframe-wrap { height: 360px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+      .iframe-wrap iframe { width: 100%; height: 720px; border: 0; }
+
+      /* 打印相关样式 */
+      @page { size: A4; margin: 12mm; }
+
+      @media print {
+        /* 隐藏交互控件，仅打印内容 */
+        .controls { display: none !important; }
+
+        /* 关键：将固定高度、滚动的容器在打印时展开为完整内容 */
+        .content { height: auto !important; overflow: visible !important; }
+
+        /* 关键：展开父页面中的 iframe 包裹容器与 iframe 自身 */
+        .iframe-wrap { height: auto !important; overflow: visible !important; }
+        .iframe-wrap iframe { height: auto !important; }
+
+        /* 避免单个条目被分页切割 */
+        .item { break-inside: avoid; page-break-inside: avoid; }
+
+        /* 支持 JS 生成的分页标记 */
+        .page-break { break-before: page; page-break-before: always; }
+
+        /* 仅在打印时显示水印（由 JS 注入） */
+        .watermark { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-20deg); font-size: 120px; opacity: 0.08; color: #000; z-index: 9999; pointer-events: none; }
+
+        /* 打印快照：打印时显示克隆内容，隐藏 iframe 区域，避免仅视口渲染 */
+        #print-clone-root { display: block !important; margin-top: 12px; }
+        .print-clone-section { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; margin-top: 12px; }
+        .frame-section { display: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>固定高度滚动容器的打印预览 Demo</h1>
+      <p>需求：页面内容超过固定高度出现滚动条，但打印预览应显示滚动的全部内容；并且在打印预览前可执行自定义逻辑。</p>
+
+      <div class="controls">
+        <button id="btnPrint">打印预览</button>
+        <button id="btnPageBreak">切换分页标记</button>
+        <button id="btnAppend">添加更多内容</button>
+      </div>
+
+      <div id="content" class="content" aria-label="滚动内容区域"></div>
+
+      <div class="footer">提示：打印预览时，滚动容器会展开，所有条目都会参与打印。</div>
+
+      <div class="frame-section">
+        <h2>嵌套子页面（iframe）示例</h2>
+        <p>下方为同源子页面，子页面内也包含固定高度的滚动容器。打印时父子页面均应完整展开。</p>
+        <div class="iframe-wrap">
+          <iframe id="subframe" src="child.html" title="子页面示例"></iframe>
+        </div>
+      </div>
+
+      <!-- 打印快照容器：仅在打印媒体下显示，由 JS 在 beforeprint 时填充内容 -->
+      <div id="print-clone-root" style="display:none" aria-hidden="true"></div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
