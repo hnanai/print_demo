@@ -8,10 +8,17 @@
       :root { color-scheme: light dark; }
       body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; margin: 0; }
 
-      .container { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+      .container { width: 100%; margin: 24px 0; padding: 0 40px; box-sizing: border-box; }
 
       .controls { position: sticky; top: 0; background: #fff; z-index: 10; padding: 12px 0; display: flex; gap: 12px; border-bottom: 1px solid #e5e7eb; }
       .controls button { padding: 8px 12px; border-radius: 6px; border: 1px solid #d1d5db; background: #f9fafb; cursor: pointer; }
+
+      /* 页签导航 */
+      .tabs { position: sticky; top: 0; background: #fff; z-index: 9; padding: 8px 0; display: flex; gap: 8px; border-bottom: 1px solid #e5e7eb; }
+      .tab-btn { padding: 8px 12px; border-radius: 20px; border: 1px solid #d1d5db; background: #f3f4f6; cursor: pointer; }
+      .tab-btn.active { background: #e5e7eb; }
+      .tab-panel { display: none; }
+      .tab-panel.active { display: block; }
 
       .content { height: 480px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; }
       .item { padding: 10px 12px; margin-bottom: 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fafafa; }
@@ -25,12 +32,24 @@
       .iframe-wrap { height: 360px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
       .iframe-wrap iframe { width: 100%; height: 720px; border: 0; }
 
+      /* 宽表（横向滚动）示例与基础样式 */
+      .table-section { margin-top: 16px; }
+      .table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+      .table-wrap table { border-collapse: collapse; width: max-content; min-width: 100%; }
+      .table-wrap th, .table-wrap td { border: 1px solid #e5e7eb; padding: 8px 10px; font-size: 13px; white-space: nowrap; min-width: 200px; }
+      .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; border: 1px solid #e5e7eb; }
+      .status { display: inline-block; padding: 2px 8px; border-radius: 6px; color: #fff; }
+      .status.ok { background: #10b981; }
+      .status.warn { background: #f59e0b; }
+      .status.err { background: #ef4444; }
+
       /* 打印相关样式 */
       @page { size: A4; margin: 12mm; }
 
       @media print {
         /* 隐藏交互控件，仅打印内容 */
         .controls { display: none !important; }
+        .tabs { display: none !important; }
 
         /* 关键：将固定高度、滚动的容器在打印时展开为完整内容 */
         .content { height: auto !important; overflow: visible !important; }
@@ -38,6 +57,13 @@
         /* 关键：展开父页面中的 iframe 包裹容器与 iframe 自身 */
         .iframe-wrap { height: auto !important; overflow: visible !important; }
         .iframe-wrap iframe { height: auto !important; }
+
+        /* 打印阶段移除横向滚动并展开宽度 */
+        .print-hscroll { overflow: visible !important; width: auto !important; max-width: none !important; }
+        /* 若启用列切片模式，则隐藏原始宽表，仅打印切片快照 */
+        .print-hscroll[data-print-sliced="1"] { display: none !important; }
+        /* 常见粘性元素在打印时恢复为静态定位，避免错位 */
+        .sticky { position: static !important; }
 
         /* 避免单个条目被分页切割 */
         .item { break-inside: avoid; page-break-inside: avoid; }
@@ -56,26 +82,123 @@
     </style>
   </head>
   <body>
-    <div class="container">
-      <h1>固定高度滚动容器的打印预览 Demo</h1>
-      <p>需求：页面内容超过固定高度出现滚动条，但打印预览应显示滚动的全部内容；并且在打印预览前可执行自定义逻辑。</p>
+      <div class="container">
+        <h1>固定高度滚动容器的打印预览 Demo</h1>
+        <p>需求：页面内容超过固定高度出现滚动条，但打印预览应显示滚动的全部内容；并且在打印预览前可执行自定义逻辑。</p>
 
-      <div class="controls">
-        <button id="btnPrint">打印预览</button>
-        <button id="btnPageBreak">切换分页标记</button>
-        <button id="btnAppend">添加更多内容</button>
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="tab-overview">概览</button>
+        <button class="tab-btn" data-tab="tab-activities">活动</button>
+        <button class="tab-btn" data-tab="tab-notes">备注</button>
+        <button class="tab-btn" data-tab="tab-attachments">附件</button>
+        <button class="tab-btn" data-tab="tab-timeline">时间线</button>
       </div>
 
-      <div id="content" class="content" aria-label="滚动内容区域"></div>
-
-      <div class="footer">提示：打印预览时，滚动容器会展开，所有条目都会参与打印。</div>
-
-      <div class="frame-section">
-        <h2>嵌套子页面（iframe）示例</h2>
-        <p>下方为同源子页面，子页面内也包含固定高度的滚动容器。打印时父子页面均应完整展开。</p>
-        <div class="iframe-wrap">
-          <iframe id="subframe" src="child.html" title="子页面示例"></iframe>
+      <div id="tab-overview" class="tab-panel active" role="tabpanel">
+        <div class="controls">
+          <button id="btnPrint">打印预览</button>
+          <button id="btnPageBreak">切换分页标记</button>
+          <button id="btnAppend">添加更多内容</button>
         </div>
+
+        <div id="content" class="content" aria-label="滚动内容区域"></div>
+
+        <div class="footer">提示：打印预览时，滚动容器会展开，所有条目都会参与打印。</div>
+
+        <div class="frame-section">
+          <h2>嵌套子页面（iframe）示例</h2>
+          <p>下方为同源子页面，子页面内也包含固定高度的滚动容器。打印时父子页面均应完整展开。</p>
+          <div class="iframe-wrap">
+            <iframe id="subframe" src="child.html" title="子页面示例"></iframe>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-activities" class="tab-panel" role="tabpanel">
+        <div class="controls">
+          <button class="btn-print" data-action="print">打印当前页签</button>
+        </div>
+        <div class="table-section">
+          <h2>宽表示例（横向滚动）</h2>
+          <p>下方为字段较多的表格示例，常规浏览时可横向滚动；打印预览应能完整展示所有列。</p>
+          <div class="table-wrap print-hscroll" id="wide-table-wrap">
+            <table aria-label="宽表">
+              <thead>
+                <tr>
+                  <th>列1</th><th>列2</th><th>列3</th><th>列4</th><th>列5</th><th>列6</th>
+                  <th>列7</th><th>列8</th><th>列9</th><th>列10</th><th>列11</th><th>列12</th>
+                  <th>列13</th><th>列14</th><th>列15</th><th>列16</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>A1</td><td>A2</td><td>A3</td><td>A4</td><td>A5</td><td>A6</td>
+                  <td>A7</td><td>A8</td><td>A9</td><td>A10</td><td>A11</td><td>A12</td>
+                  <td>A13</td><td>A14</td><td>A15</td><td>A16</td>
+                </tr>
+                <tr>
+                  <td>B1</td><td>B2</td><td>B3</td><td>B4</td><td>B5</td><td>B6</td>
+                  <td>B7</td><td>B8</td><td>B9</td><td>B10</td><td>B11</td><td>B12</td>
+                  <td>B13</td><td>B14</td><td>B15</td><td>B16</td>
+                </tr>
+                <tr>
+                  <td>C1</td><td>C2</td><td>C3</td><td>C4</td><td>C5</td><td>C6</td>
+                  <td>C7</td><td>C8</td><td>C9</td><td>C10</td><td>C11</td><td>C12</td>
+                  <td>C13</td><td>C14</td><td>C15</td><td>C16</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-notes" class="tab-panel" role="tabpanel">
+        <div class="controls">
+          <button class="btn-print" data-action="print">打印当前页签</button>
+        </div>
+        <h2>备注与表单示例</h2>
+        <form id="notes-form" class="notes-form">
+          <div>
+            <label>联系人</label>
+            <input type="text" id="contactInput" placeholder="输入联系人" />
+          </div>
+          <div>
+            <label>优先级</label>
+            <select id="prioritySelect">
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
+          </div>
+          <div>
+            <label>备注</label>
+            <textarea id="notesTextarea" rows="4" placeholder="填写备注..."></textarea>
+          </div>
+          <div>
+            <label><input type="checkbox" id="followUpCheck" /> 需要跟进</label>
+          </div>
+        </form>
+      </div>
+
+      <div id="tab-attachments" class="tab-panel" role="tabpanel">
+        <div class="controls">
+          <button class="btn-print" data-action="print">打印当前页签</button>
+        </div>
+        <h2>附件与绘图示例</h2>
+        <div class="gallery" style="display:flex; gap:8px; flex-wrap:wrap;">
+          <img src="https://via.placeholder.com/120x80.png?text=IMG1" alt="附件1" />
+          <img src="https://via.placeholder.com/120x80.png?text=IMG2" alt="附件2" />
+          <img src="https://via.placeholder.com/120x80.png?text=IMG3" alt="附件3" />
+        </div>
+        <canvas id="demoCanvas" width="320" height="120" style="margin-top:12px; border:1px solid #e5e7eb; border-radius:8px;"></canvas>
+      </div>
+
+      <div id="tab-timeline" class="tab-panel" role="tabpanel">
+        <div class="controls">
+          <button class="btn-print" data-action="print">打印当前页签</button>
+        </div>
+        <h2>时间线</h2>
+        <div id="timeline" class="content" aria-label="时间线"></div>
       </div>
 
       <!-- 打印快照容器：仅在打印媒体下显示，由 JS 在 beforeprint 时填充内容 -->

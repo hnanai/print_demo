@@ -184,6 +184,279 @@ function clearPrintClones() {
 - 审计与日志：在 `beforeprint` 中记录打印操作（时间、用户、数据版本），并在后端建立审计链路。
 - 资源准备：为图片与异步数据建立统一的“打印前就绪”检查，确保打印前资源已加载完成。
 
+## 宽表（横向滚动）打印
+### 场景与问题
+- 字段较多的表格通常设置横向滚动，浏览器打印仅做纵向分页，宽度超出会被裁剪或不可见。
+
+### 解决方案（双轨）
+1. 自动缩放到页面宽度（优先）
+   - 在打印前计算可打印宽度与表格实际宽度的比例，对 `.print-hscroll` 容器应用 `transform: scale(ratio)` 与 `transform-origin: top left`。
+   - 可结合 `@page { size: A4 landscape; }` 提升可用宽度。
+2. 列切片快照（超宽表格）
+   - 按列宽将表格拆分为多个切片，每个切片只显示一段列范围；在打印媒体下隐藏原始宽表，仅打印切片快照，保证可读性。
+
+### 样式补充示例（`index.html`）
+```css
+/* 常规浏览：横向滚动 */
+.table-wrap { overflow-x: auto; }
+.table-wrap table { width: max-content; min-width: 100%; border-collapse: collapse; }
+
+@media print {
+  /* 打印阶段移除横向滚动并展开宽度 */
+  .print-hscroll { overflow: visible !important; width: auto !important; max-width: none !important; }
+  /* 列切片模式隐藏原始宽表 */
+  .print-hscroll[data-print-sliced="1"] { display: none !important; }
+  .sticky { position: static !important; }
+}
+```
+
+### 关键脚本（`script.js`，函数级注释已添加）
+```js
+// 准备宽表（横向滚动）参与打印：自适应缩放或列切片
+function prepareWideTablesForPrint() {
+  const wraps = document.querySelectorAll('.print-hscroll');
+  wraps.forEach((wrap) => {
+    const printable = document.documentElement.clientWidth;
+    const table = wrap.querySelector('table') || wrap.firstElementChild || wrap;
+    const actual = table?.scrollWidth || wrap.scrollWidth;
+    const ratio = actual > 0 ? printable / actual : 1;
+    if (ratio < 0.625) { buildTableColumnSlices(wrap); wrap.dataset.printSliced = '1'; }
+    else { scaleToPrintableWidth(wrap); }
+  });
+}
+
+// 将元素缩放到可打印宽度
+function scaleToPrintableWidth(el) {
+  const printable = document.documentElement.clientWidth;
+  const content = el.querySelector('table') || el.firstElementChild || el;
+  const actual = content?.scrollWidth || el.scrollWidth;
+  const ratio = Math.min(1, printable / Math.max(1, actual));
+  if (ratio < 1) { el.dataset.printScaled = '1'; el.style.transformOrigin = 'top left'; el.style.transform = `scale(${ratio})`; }
+}
+
+// 将宽表按列切片生成打印快照
+function buildTableColumnSlices(wrap) {
+  const root = document.getElementById('print-clone-root');
+  if (!root) return;
+  const table = wrap.querySelector('table');
+  const printable = document.documentElement.clientWidth;
+  const headerRow = table.querySelector('thead tr') || table.querySelector('tr');
+  const cells = headerRow ? Array.from(headerRow.cells) : [];
+  const colCount = cells.length;
+  const widths = cells.map((c) => c.offsetWidth || 100);
+  const groups = []; let start = 0; let acc = 0;
+  for (let i = 0; i < colCount; i++) { const w = widths[i] || 100; if (acc + w > printable && i > start) { groups.push([start, i]); start = i; acc = 0; } acc += w; if (i === colCount - 1) groups.push([start, i + 1]); }
+  groups.forEach(([from, to], idx) => { const section = document.createElement('div'); section.className = 'print-clone-section'; section.innerHTML = `<h2>表格列切片 #${idx + 1}（列 ${from + 1} ~ ${to}）</h2>`; const clone = table.cloneNode(true); Array.from(clone.rows).forEach((row) => { Array.from(row.cells).forEach((cell, ci) => { if (ci < from || ci >= to) cell.style.display = 'none'; }); }); section.appendChild(clone); root.appendChild(section); }); root.style.display = 'block';
+}
+
+// 清理宽表打印状态
+function cleanupWideTablePrint() {
+  document.querySelectorAll('.print-hscroll[data-printScaled="1"]').forEach((el) => { el.style.transform = ''; el.style.transformOrigin = ''; delete el.dataset.printScaled; });
+  document.querySelectorAll('.print-hscroll[data-print-sliced="1"]').forEach((el) => { delete el.dataset.printSliced; });
+}
+```
+
+### 验证建议
+- 在示例页面使用“宽表示例”检查打印预览：
+  - 中度超宽：开启缩放，所有列在一页宽度内可见（高度分页）。
+  - 极端超宽：生成多个列切片快照，每段显示部分列，纵向依次排列。
+- 打印后确认：缩放与切片状态清理，页面恢复。
+
+### 注意事项
+- Safari 对缩放的处理与 Chrome 有细微差异，阈值可按实际项目调整。
+- 存在冻结列/粘性表头时，建议优先列切片以避免遮罩与偏移问题。
+
+## 复杂页面的打印快照
+### 问题
+- 子页面可能包含外链样式、动态表单值、Canvas绘图、复杂布局（sticky/fixed），简单克隆会出现样式缺失或内容为空。
+
+### 方案
+1. 异步快照构建
+   - 在打印前异步提取同源外链样式（`<link rel="stylesheet">`），与内联 `<style>` 合并注入到快照段落。
+   - 固化表单状态：将 `input/select/textarea` 的当前值写入克隆节点（属性和值）。
+   - 复制画布：将 `canvas` 转为 `dataURL` 并以 `img` 替换，避免跨域导致空白。
+2. 生命周期接入
+   - 打印入口改为异步，确保快照构建完成后再进入打印预览。
+3. 限制与回退
+   - 跨域子页面无法访问其文档与样式，保持高度扩展策略；若需要快照，需后端代理或同源化处理。
+
+### 关键脚本（`script.js`）
+```js
+// 构建打印快照（异步，兼容复杂页面）
+async function buildPrintClonesAsync() {
+  const root = document.getElementById('print-clone-root');
+  if (!root) return;
+  root.innerHTML = '';
+  const frames = document.querySelectorAll('iframe');
+  for (let idx = 0; idx < frames.length; idx++) {
+    const f = frames[idx];
+    const cw = f.contentWindow; const doc = cw?.document; if (!doc) continue;
+    const section = document.createElement('div'); section.className = 'print-clone-section';
+    const title = document.createElement('h2'); title.textContent = `子页面快照 #${idx + 1}`; section.appendChild(title);
+    const styleTexts = await extractStylesFromDocAsync(doc);
+    if (styleTexts.length) { const styleEl = document.createElement('style'); styleEl.textContent = styleTexts.join('\n'); section.appendChild(styleEl); }
+    const cloned = doc.body.cloneNode(true); section.appendChild(cloned);
+    materializeFormValues(doc, cloned);
+    await copyCanvasBitmapsAsync(doc, cloned);
+    root.appendChild(section);
+  }
+  root.style.display = 'block';
+}
+
+// 提取文档中的样式（异步）
+async function extractStylesFromDocAsync(doc) {
+  const texts = Array.from(doc.querySelectorAll('style')).map((s) => s.textContent || '');
+  const links = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
+  const ext = await Promise.all(links.map(async (link) => {
+    const href = link.getAttribute('href'); if (!href) return '';
+    const url = new URL(href, doc.baseURI); if (url.origin !== window.location.origin) return '';
+    const res = await fetch(url.href); if (!res.ok) return ''; return await res.text();
+  }));
+  return texts.concat(ext.filter(Boolean));
+}
+
+// 固化表单状态到克隆节点
+function materializeFormValues(origDoc, clonedRoot) {
+  const origInputs = origDoc.querySelectorAll('input, select, textarea');
+  const clonedInputs = clonedRoot.querySelectorAll('input, select, textarea');
+  const n = Math.min(origInputs.length, clonedInputs.length);
+  for (let i = 0; i < n; i++) { const o = origInputs[i]; const c = clonedInputs[i];
+    if (o.tagName === 'INPUT') { const type = o.getAttribute('type') || 'text';
+      if (type === 'checkbox' || type === 'radio') { c.checked = o.checked; if (o.checked) c.setAttribute('checked', ''); else c.removeAttribute('checked'); }
+      else { c.value = o.value; c.setAttribute('value', o.value); }
+    } else if (o.tagName === 'TEXTAREA') { c.value = o.value; c.textContent = o.value; }
+    else if (o.tagName === 'SELECT') { c.value = o.value; Array.from(c.options).forEach((opt) => { opt.selected = (opt.value === o.value); if (opt.selected) opt.setAttribute('selected', ''); else opt.removeAttribute('selected'); }); }
+  }
+}
+
+// 复制画布位图到克隆节点（异步）
+async function copyCanvasBitmapsAsync(origDoc, clonedRoot) {
+  const origCanvases = origDoc.querySelectorAll('canvas');
+  const clonedCanvases = clonedRoot.querySelectorAll('canvas');
+  const n = Math.min(origCanvases.length, clonedCanvases.length);
+  for (let i = 0; i < n; i++) { const src = origCanvases[i]; const dst = clonedCanvases[i];
+    try { const dataURL = src.toDataURL('image/png'); const img = document.createElement('img'); img.src = dataURL; img.style.maxWidth = '100%'; dst.replaceWith(img); } catch {}
+    await Promise.resolve();
+  }
+}
+```
+
+### 验证
+- 复杂子页面包含：外链样式、表单、canvas、宽表。进入打印预览应看到：样式完整、表单值已固化、canvas显示为图片、宽表已缩放/切片。
+
+## CRM 页签与分面打印
+### 需求与设计
+- 页签切换模拟 CRM 详情页的多分面视图（概览、活动、备注、附件、时间线）。
+- 每个页签都有独立的“打印当前页签”按钮，打印范围仅限当前激活面板。
+- 概览页签承载子页面（iframe）示例，打印时仅在概览页签下构建子页面快照。
+
+### 页面布局调整（100% 宽度 + 40px 间距）
+```css
+.container { width: 100%; margin: 24px 0; padding: 0 40px; box-sizing: border-box; }
+```
+
+### 页签样式与打印媒体
+```css
+.tabs { position: sticky; top: 0; background: #fff; z-index: 9; padding: 8px 0; display: flex; gap: 8px; border-bottom: 1px solid #e5e7eb; }
+.tab-btn { padding: 8px 12px; border-radius: 20px; border: 1px solid #d1d5db; background: #f3f4f6; cursor: pointer; }
+.tab-btn.active { background: #e5e7eb; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+@media print {
+  .tabs { display: none !important; }
+}
+```
+
+### 表格横向滚动的增强
+```css
+.table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+.table-wrap table { border-collapse: collapse; width: max-content; min-width: 100%; }
+.table-wrap th, .table-wrap td { border: 1px solid #e5e7eb; padding: 8px 10px; font-size: 13px; white-space: nowrap; min-width: 200px; }
+.chip { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: #3730a3; border: 1px solid #e5e7eb; }
+.status { display: inline-block; padding: 2px 8px; border-radius: 6px; color: #fff; }
+.status.ok { background: #10b981; }
+.status.warn { background: #f59e0b; }
+.status.err { background: #ef4444; }
+```
+
+### 交互与打印入口（`script.js`）
+```js
+// 绑定页签与打印按钮
+function bindTabs() { /* 切换按钮与面板 active 状态 */ }
+function setActiveTab(id) { /* 切换激活面板 */ }
+
+// 打印入口：仅当激活页签为概览时构建子页面快照
+async function triggerPrint() {
+  prepareWideTablesForPrint(); // 只处理当前激活面板中的宽表
+  prepareAllFramesForPrint();
+  const activeTab = getActiveTabId();
+  if (activeTab === 'tab-overview') { await buildPrintClonesAsync(); }
+  processWideTablesInCloneRoot();
+  window.print();
+}
+
+function getActiveTabId() {
+  const panel = document.querySelector('.tab-panel.active');
+  return panel ? panel.id : null;
+}
+
+// 仅处理当前面板中的宽表，避免跨面板误处理
+function prepareWideTablesForPrint() {
+  document.querySelectorAll('.print-hscroll').forEach((wrap) => {
+    const panel = wrap.closest('.tab-panel');
+    if (panel && !panel.classList.contains('active')) return;
+    // 宽表缩放或列切片逻辑（见“宽表打印”章节）
+  });
+}
+```
+
+### 宽表数据模拟与横向滚动触发
+```js
+// 初始化“活动”页签的宽表数据（函数级注释与日志已在代码中）
+function initActivitiesTableDemo(rows) {
+  const table = document.querySelector('#wide-table-wrap table');
+  const tbody = table.querySelector('tbody');
+  const types = ['text','longtext','currency','percent','date','datetime','chip','status','link','email','phone','id','owner','stage','region','remark'];
+  const fmtCurrency = (n) => `¥${(n / 100).toFixed(2)}`;
+  const fmtPercent = (n) => `${Math.min(99, Math.max(0, n))}%`;
+  const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const pick = (arr) => arr[rand(0, arr.length - 1)];
+  tbody.innerHTML = '';
+  for (let r = 0; r < rows; r++) {
+    const tr = document.createElement('tr');
+    for (let c = 0; c < types.length; c++) {
+      const td = document.createElement('td');
+      const t = types[c];
+      if (t === 'text') td.textContent = `客户${rand(1000, 9999)}`;
+      else if (t === 'longtext') td.textContent = `较长备注 ${r}-${c}`;
+      else if (t === 'currency') td.textContent = fmtCurrency(rand(10000, 999999));
+      else if (t === 'percent') td.textContent = fmtPercent(rand(0, 100));
+      else if (t === 'date') td.textContent = new Date(Date.now() - rand(0, 10) * 86400000).toLocaleDateString();
+      else if (t === 'datetime') td.textContent = new Date(Date.now() - rand(0, 10) * 86400000).toLocaleString();
+      else if (t === 'chip') td.innerHTML = `<span class="chip">${pick(['新线索','跟进中','已成交','暂停'])}</span>`;
+      else if (t === 'status') td.innerHTML = `<span class="status ${pick(['ok','warn','err'])}">${pick(['正常','预警','异常'])}</span>`;
+      else if (t === 'link') td.innerHTML = `<a href="#" onclick="return false">查看详情</a>`;
+      else if (t === 'email') td.textContent = `user${rand(1, 999)}@example.com`;
+      else if (t === 'phone') td.textContent = `1${rand(3000000000, 3999999999)}`;
+      else if (t === 'id') td.textContent = `ID-${rand(100000, 999999)}`;
+      else if (t === 'owner') td.textContent = pick(['王一','李二','张三','赵四','刘五']);
+      else if (t === 'stage') td.textContent = pick(['初访','方案','谈判','合同','回款']);
+      else if (t === 'region') td.textContent = pick(['华北','华东','华南','西南','东北']);
+      else if (t === 'remark') td.textContent = `备注#${rand(1, 999)}`;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+```
+
+### 验收要点（页签打印）
+- 任一页签点击“打印当前页签”，仅打印该面板内容。
+- 概览页签打印时包含子页面快照（样式、表单、canvas）。
+- 活动页签打印时宽表按策略显示所有列（缩放或切片）。
+- 打印后清理：快照容器清空、宽表缩放/切片状态恢复、iframe高度与父容器滚动恢复。
+
 ## 验收清单（Checklist）
 - 滚动容器在打印预览中完整展开，包含全部条目。
 - 非打印元素（按钮、操作栏）在预览中隐藏。
